@@ -1,6 +1,8 @@
 """Session management tools for COMSOL MCP Server."""
 
 from typing import Optional
+
+import anyio
 from mcp.server import Server
 from mcp.server.fastmcp import FastMCP
 import mph
@@ -200,7 +202,7 @@ def register_session_tools(mcp: FastMCP) -> None:
     """Register session management tools with the MCP server."""
     
     @mcp.tool()
-    def comsol_start(cores: Optional[int] = None, version: Optional[str] = None, products: Optional[list[str]] = None) -> dict:
+    async def comsol_start(cores: Optional[int] = None, version: Optional[str] = None, products: Optional[list[str]] = None) -> dict:
         """
         Start a local COMSOL client session.
         
@@ -213,10 +215,13 @@ def register_session_tools(mcp: FastMCP) -> None:
         Returns:
             Session info including version and core count, or error message
         """
-        return session_manager.start(cores=cores, version=version, products=products)
+        # Starting the JVM blocks; run it in a worker thread so the event loop stays responsive
+        return await anyio.to_thread.run_sync(
+            lambda: session_manager.start(cores=cores, version=version, products=products)
+        )
     
     @mcp.tool()
-    def comsol_connect(port: int, host: str = "localhost") -> dict:
+    async def comsol_connect(port: int, host: str = "localhost") -> dict:
         """
         Connect to a remote COMSOL server.
         
@@ -227,7 +232,10 @@ def register_session_tools(mcp: FastMCP) -> None:
         Returns:
             Connection info or error message
         """
-        return session_manager.connect(port=port, host=host)
+        # Same as comsol_start: constructing the Client starts the JVM
+        return await anyio.to_thread.run_sync(
+            lambda: session_manager.connect(port=port, host=host)
+        )
     
     @mcp.tool()
     def comsol_disconnect() -> dict:
