@@ -54,6 +54,7 @@ def register_study_tools(mcp: FastMCP) -> None:
     def study_create(
         study_type: str = "Stationary",
         study_name: Optional[str] = None,
+        step_properties: Optional[dict] = None,
         model_name: Optional[str] = None
     ) -> dict:
         """
@@ -69,6 +70,9 @@ def register_study_tools(mcp: FastMCP) -> None:
         Args:
             study_type: Type of study to create
             study_name: Optional name/tag for the study
+            step_properties: Optional properties set on the study step,
+                e.g. {"tlist": "range(0,60[s],3600[s])"} for TimeDependent output
+                times, or {"freq": "..."} for Frequency studies
             model_name: Model name (default: current model)
 
         Returns:
@@ -86,28 +90,51 @@ def register_study_tools(mcp: FastMCP) -> None:
             existing_studies = jm.study().size()
             study_tag = study_name or f"std{existing_studies + 1}"
 
-            TYPE_MAP = {
-                "Stationary": "stat",
-                "TimeDependent": "time",
-                "Eigenfrequency": "eig",
-                "Frequency": "freq",
-                "Perturbation": "pert",
-                "stat": "stat",
-                "time": "time",
-                "eig": "eig",
-                "freq": "freq",
+            # COMSOL Java API: study.create(tag, <full step type name>).
+            # "Stationary"/"Transient" etc. are the feature type names; the
+            # short forms ("stat", "time", ...) are conventional tags.
+            STEP_TYPES = {
+                "Stationary": ("stat", "Stationary"),
+                "stat": ("stat", "Stationary"),
+                "TimeDependent": ("time", "Transient"),
+                "Transient": ("time", "Transient"),
+                "time": ("time", "Transient"),
+                "Eigenfrequency": ("eig", "Eigenfrequency"),
+                "eig": ("eig", "Eigenfrequency"),
+                "Frequency": ("freq", "Frequency"),
+                "freq": ("freq", "Frequency"),
             }
-
-            step_type = TYPE_MAP.get(study_type, study_type)
+            if study_type not in STEP_TYPES:
+                return {
+                    "success": False,
+                    "error": (
+                        f"Unknown study type: {study_type}. Use one of: "
+                        + ", ".join(sorted(set(STEP_TYPES)))
+                    ),
+                }
+            step_tag, step_type = STEP_TYPES[study_type]
 
             study = jm.study().create(study_tag)
-            study.create("step1", step_type)
+            # keep the display label equal to the tag so name-based lookups
+            # (MPh resolves model/studies/<name> by label) succeed
+            study.label(study_tag)
+            step = study.create(step_tag, step_type)
+
+            property_failures = {}
+            if step_properties:
+                for prop_name, prop_value in step_properties.items():
+                    try:
+                        step.set(prop_name, prop_value)
+                    except Exception as e:
+                        property_failures[prop_name] = str(e)[:120]
 
             return {
-                "success": True,
+                "success": not property_failures,
                 "study": study_tag,
                 "type": study_type,
                 "step_type": step_type,
+                "step_properties": step_properties or {},
+                "property_errors": property_failures or None,
                 "model": model.name(),
             }
         except Exception as e:
